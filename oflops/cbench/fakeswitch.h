@@ -59,7 +59,7 @@ typedef struct cbench_thr_args {
 
 enum test_mode 
 {
-    MODE_LATENCY, MODE_THROUGHPUT
+    MODE_LATENCY, MODE_THROUGHPUT, MODE_SCALABILITY
 };
 
 enum handshake_status {
