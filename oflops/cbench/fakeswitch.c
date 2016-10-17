@@ -313,10 +313,10 @@ static int make_packet_in(int switch_id,
     struct ether_header * eth;
     const char fake[] = {
                 0x97,0x0a,0x00,0x52,0x00,0x00,0x00,0x00,0x00,0x00,0x01,
-        0x01,0x00,0x40,0x00,0x01,0x00,0x00,0x80,0x00,0x00,0x00,
-        0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x02,0x08,0x00,0x45,
-        0x00,0x00,0x32,0x00,0x00,0x00,0x00,0x40,0xff,0xf7,0x2c,
-        0xc0,0xa8,0x00,0x28,0xc0,0xa8,0x01,0x28,0x7a,0x18,0x58,
+        	0x01,0x00,0x40,0x00,0x01,0x00,0x00,0x80,0x00,0x00,0x00,
+        	0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x02,0x08,0x00,0x45,
+        	0x00,0x00,0x32,0x00,0x00,0x00,0x00,0x40,0xff,0xf7,0x2c,
+        	0xc0,0xa8,0x00,0x28,0xc0,0xa8,0x01,0x28,0x7a,0x18,0x58,
                 0x6b,0x11,0x08,0x97,0xf5,0x19,0xe2,0x65,0x7e,0x07,0xcc,
                 0x31,0xc3,0x11,0xc7,0xc4,0x0c,0x8b,0x95,0x51,0x51,0x33,
                 0x54,0x51,0xd5,0x00,0x36};
@@ -344,7 +344,18 @@ void fakeswitch_change_status_now (struct fakeswitch *fs, int new_status) {
     }
         
 }
-
+/***********************************************************************/
+static int make_echo_request(int switch_id, int xid, int buffer_id, char * buf, int buflen){
+    struct ofp_header echo;
+    
+    echo.version= OFP_VERSION;
+    echo.length = htons(sizeof(echo));
+    echo.type   = OFPT_ECHO_REQUEST;
+    echo.xid = xid;
+    memcpy(buf, (char *) &echo, sizeof(echo));
+	 
+    return sizeof(echo);
+}
 /***********************************************************************/
 void fakeswitch_handle_read(struct fakeswitch *fs, 
                             int* initialized_switches, 
@@ -387,8 +398,10 @@ void fakeswitch_handle_read(struct fakeswitch *fs,
                 po = (struct ofp_packet_out *) ofph;
                 if ( fs->switch_status == READY_TO_SEND && !packet_out_is_lldp(po)) { 
                     // assume this is in response to what we sent
-                    fs->count++;        // got response to what we went
-                    fs->probe_state--;
+		    if (fs->mode != MODE_SCALABILITY){
+                    	fs->count++;        // got response to what we went
+                    	fs->probe_state--;
+		    }
                 }
                 break;
             case OFPT_FLOW_MOD:
@@ -396,8 +409,10 @@ void fakeswitch_handle_read(struct fakeswitch *fs,
                 if( fs->switch_status == READY_TO_SEND && 
                     ( fm->command == htons(OFPFC_ADD) || 
                       fm->command == htons(OFPFC_MODIFY_STRICT) ) ) {
-                    fs->count++;        // got response to what we went
-                    fs->probe_state--;
+		    if (fs->mode != MODE_SCALABILITY){
+                    	fs->count++;        // got response to what we went
+                    	fs->probe_state--;
+		    }
                 }
                 break;
             case OFPT_FEATURES_REQUEST:
@@ -467,6 +482,13 @@ void fakeswitch_handle_read(struct fakeswitch *fs,
                 echo.xid = ofph->xid;
                 msgbuf_push(fs->outbuf,(char *) &echo, sizeof(echo));
                 break;
+	    case OFPT_ECHO_REPLY:
+		if(fs->mode == MODE_SCALABILITY){
+		    fs->count++;
+		    //fs->probe_state--;
+		    //fprintf(stderr, "got reply:%d\n", fs->id);
+		}
+		break;
             case OFPT_BARRIER_REQUEST:
                 debug_msg(fs, "got barrier, sent barrier_resp");
                 barrier.version= OFP_VERSION;
@@ -518,7 +540,7 @@ static void fakeswitch_handle_write(struct fakeswitch *fs,
         (*threads_started == total_threads) &&
         (delay_is_over) ) {
 
-        if ((fs->mode == MODE_LATENCY) && ( fs->probe_state == 0 ))      
+        if ((fs->mode == MODE_LATENCY || fs->mode == MODE_SCALABILITY) && ( fs->probe_state == 0 ))      
             send_count = 1;                 // just send one packet
         else if ((fs->mode == MODE_THROUGHPUT) && 
                  (msgbuf_count_buffered(fs->outbuf) < throughput_buffer))  // keep buffer full
@@ -528,15 +550,25 @@ static void fakeswitch_handle_write(struct fakeswitch *fs,
             // queue up packet
             fs->probe_state++;
             // TODO come back and remove this copy
-            count = make_packet_in(fs->id, 
-                                   fs->xid++, 
-                                   fs->current_buffer_id, 
-                                   buf, 
-                                   BUFLEN, 
-                                   fs->current_mac_address);
-            fs->current_mac_address = ( fs->current_mac_address + 1 ) % fs->total_mac_addresses;
-            fs->current_buffer_id =  ( fs->current_buffer_id + 1 ) % NUM_BUFFER_IDS;
-            msgbuf_push(fs->outbuf, buf, count);
+	    if(fs->mode == MODE_LATENCY || fs->mode == MODE_THROUGHPUT){
+                count = make_packet_in(fs->id, 
+                                       fs->xid++, 
+                                       fs->current_buffer_id, 
+                                       buf, 
+                                       BUFLEN, 
+                                       fs->current_mac_address);
+                fs->current_mac_address = ( fs->current_mac_address + 1 ) % fs->total_mac_addresses;
+                fs->current_buffer_id =  ( fs->current_buffer_id + 1 ) % NUM_BUFFER_IDS;
+                msgbuf_push(fs->outbuf, buf, count);
+	    }
+	    else if(fs->mode == MODE_SCALABILITY){
+		count = make_echo_request(fs->id,
+					  fs->xid++,
+					  fs->current_buffer_id,
+					  buf,
+					  BUFLEN);
+                msgbuf_push(fs->outbuf, buf, count);
+            }
             debug_msg(fs, "send message %d", i);
         }
     } else if (fs->switch_status == LEARN_DSTMAC) {

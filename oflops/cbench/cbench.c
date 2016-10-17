@@ -43,6 +43,7 @@ struct myargs my_options[] = {
     {"ms-per-test", 'm', "test length in ms", MYARGS_INTEGER, {.integer = 1000}},
     {"port",        'p', "controller port",  MYARGS_INTEGER, {.integer = OFP_TCP_PORT}},
     {"throughput",  't', "test throughput instead of latency", MYARGS_NONE, {.none = 0}},
+    {"scalability",  's', "test scalability instead of latency", MYARGS_NONE, {.none = 0}},
     {"warmup",  'w', "loops to be disregarded on test start (warmup)", MYARGS_INTEGER, {.integer = 1}},
     {"cooldown",  'C', "loops to be disregarded at test end (cooldown)", MYARGS_INTEGER, {.integer = 0}},
     {"delay",  'D', "delay starting testing after features_reply is received (in ms)", MYARGS_INTEGER, {.integer = 0}},
@@ -58,7 +59,7 @@ struct myargs my_options[] = {
 void debug_thread_msg(struct cbench_thr_args * args, char * msg, ...)
 {
     va_list aq;
-
+    
     if(args->debug_threads == 0 )
         return;
 
@@ -158,6 +159,9 @@ struct cbench_thr_args initialize_thread_struct (int argc, char * argv[]) {
             case 't': 
                 my_thread_args.mode = MODE_THROUGHPUT;
                 break;
+	    case 's':
+		my_thread_args.mode = MODE_SCALABILITY;
+		break;
             case 'w': 
                 my_thread_args.warmup = atoi(optarg);
                 break;
@@ -327,6 +331,7 @@ int timeout_connect(int fd, const char * hostname, int port, int mstimeout) {
         ret = select(fd + 1, NULL, &fds, NULL, &tv);
         #endif
     }
+
     freeaddrinfo(res);
 
     #ifdef USE_EPOLL
@@ -411,7 +416,6 @@ int count_bits(int n)
 
 void print_thread_arguments ( struct cbench_thr_args* args)
 {
-
     fprintf(stderr, "\n Controller=%s \n Port=%d \n Fake Switches = %d \n Dpid Offset = %d \n"
                     "Delay Per Thread = %d \n Tests Per Loop = %d \n Debug = %d \n "
                     "Mac addresses = %d \n Learn Dst Macs = %d \n MSTest = %d \n Warmup = %d "
@@ -495,7 +499,7 @@ void* cbench_thread(void *targs)
         if(args->debug)
             fprintf(stderr,"Initializing switch %d ... ", i+1);
         fflush(stderr);
-    usleep(args->switch_add_delay);
+    	usleep(args->switch_add_delay);
         #ifdef USE_EPOLL
         fakeswitch_init(&fakeswitches[i],args->dpid_offset+i,sock,BUFLEN, args->debug, args->mode, args->total_mac_addresses, args->learn_dst_macs);
         #else
@@ -620,6 +624,20 @@ int main(int argc, char * argv[])
      */ 
     cbench_thr_args_t temp = initialize_thread_struct(argc,argv);
     
+    char* mode_msg;
+    switch(temp.mode)
+    {
+	case MODE_LATENCY:
+	    mode_msg = "'latency'";
+	    break;
+	case MODE_THROUGHPUT:
+	    mode_msg = "'throughput'";
+	    break;
+	case MODE_SCALABILITY:
+	    mode_msg = "'scalability'";
+	    break;
+    };    
+ 
     fprintf(stderr, "cbench: controller benchmarking tool\n"
                 "   running in mode %s\n"
                 "   connecting to controller at %s:%d \n"
@@ -629,11 +647,12 @@ int main(int argc, char * argv[])
                 "   starting test with %d ms delay after features_reply\n"
                 "   ignoring first %d \"warmup\" and last %d \"cooldown\" loops\n"
                 "   debugging info is %s\n",
-                temp.mode == MODE_THROUGHPUT? "'throughput'": "'latency'",
+                //temp.mode == MODE_THROUGHPUT? "'throughput'": "'latency'",
+		mode_msg,
                 temp.controller_hostname,
                 temp.controller_port,
                 (temp.n_fakeswitches)*(temp.total_threads),
-        temp.total_threads,
+        	temp.total_threads,
                 temp.tests_per_loop,
                 temp.mstestlen,
                 temp.total_mac_addresses,
